@@ -16,7 +16,7 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]
 USER_SESSION = os.environ["USER_SESSION"]
 OWNER_IDS = {int(x.strip()) for x in os.environ.get("OWNER_IDS", "").split(",") if x.strip()}
 CHANNEL_ID = int(os.environ["CHANNEL_ID"])
-AMAZON_RE = re.compile(r"(?i)(?:https?://)?(?:www\\.)?(?:amazon\\.[a-z.]{2,}|amzn\\.to|a\\.co)(?:[/?:#][^\\s<>()\\]]*)?")
+AMAZON_RE = re.compile(r"(?i)(?:https?://)?(?:www\.)?(?:amazon\.[a-z.]{2,}|amzn\.to|a\.co)(?:[/?:#][^\s<>()\]]*)?")
 
 bot = Client("amazon_cleaner_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 user = Client("amazon_cleaner_user", api_id=API_ID, api_hash=API_HASH, session_string=USER_SESSION)
@@ -83,7 +83,7 @@ async def scan_from(start_id: int, status_chat_id: int):
                         scan_state["deleted"] += 1
                 await asyncio.sleep(0.15)
             result = "Scan stopped." if stop_event.is_set() else "Scan completed."
-            await bot.send_message(status_chat_id, f"{result}\\nScanned: {scan_state['scanned']}\\nDeleted: {scan_state['deleted']}\\nLast checked message ID: {scan_state['last_id']}")
+            await bot.send_message(status_chat_id, f"{result}\nScanned: {scan_state['scanned']}\nDeleted: {scan_state['deleted']}\nLast checked message ID: {scan_state['last_id']}")
         except Exception as exc:
             log.exception("Scan failed")
             await bot.send_message(status_chat_id, f"Scan failed: {type(exc).__name__}: {exc}")
@@ -94,7 +94,7 @@ async def scan_from(start_id: int, status_chat_id: int):
 async def start_cmd(_, message: Message):
     if not is_owner(message):
         return
-    await message.reply_text("Amazon Media Cleaner is ready.\\n\\n/from MESSAGE_ID - scan from that message to latest\\n/stop - stop current scan\\n/status - show progress\\n/stats - show last scan counts")
+    await message.reply_text("Amazon Media Cleaner is ready.\n\n/from MESSAGE_ID - scan from that message to latest\n/stop - stop current scan\n/status - show progress\n/stats - show last scan counts")
 
 @bot.on_message(filters.private & filters.command("from"))
 async def from_cmd(_, message: Message):
@@ -119,13 +119,13 @@ async def stop_cmd(_, message: Message):
 async def status_cmd(_, message: Message):
     if not is_owner(message):
         return
-    await message.reply_text(f"Running: {scan_state['running']}\\nScanned: {scan_state['scanned']}\\nDeleted: {scan_state['deleted']}\\nLast checked ID: {scan_state['last_id']}")
+    await message.reply_text(f"Running: {scan_state['running']}\nScanned: {scan_state['scanned']}\nDeleted: {scan_state['deleted']}\nLast checked ID: {scan_state['last_id']}")
 
 @bot.on_message(filters.private & filters.command("stats"))
 async def stats_cmd(_, message: Message):
     if not is_owner(message):
         return
-    await message.reply_text(f"Last scan stats\\nScanned: {scan_state['scanned']}\\nDeleted: {scan_state['deleted']}")
+    await message.reply_text(f"Last scan stats\nScanned: {scan_state['scanned']}\nDeleted: {scan_state['deleted']}")
 
 async def main():
     await user.start()
