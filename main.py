@@ -556,17 +556,29 @@ async def previewamazon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     async def scan():
         async with scan_lock:
+            stop_event.clear()
+            scan_state.update(running=True, mode="preview", scanned=0, matched=0,
+                              deleted=0, last_id=None, channel=cid)
             count = scanned = 0
             auto_promoted = False
+            stopped = False
             try:
                 auto_promoted = await ensure_history_account_admin(cid, context.bot)
                 async for message in user.get_chat_history(cid):
+                    if stop_event.is_set():
+                        stopped = True
+                        break
                     scanned += 1
+                    scan_state["scanned"] = scanned
+                    scan_state["last_id"] = message.id
                     if has_photo(message) and contains_amazon_link(message):
                         count += 1
+                        scan_state["matched"] = count
+                label = "Preview stopped." if stopped else "Preview complete."
                 await context.bot.send_message(update.effective_chat.id,
-                    f"Preview complete.\nChannel: {cid}\nScanned: {scanned}\nAmazon photo matches: {count}\nKoi post delete nahi ki gayi.")
+                    f"{label}\\nChannel: {cid}\\nScanned: {scanned}\\nAmazon photo matches: {count}\\nKoi post delete nahi ki gayi.")
             except Exception as exc:
+                log.exception("Amazon preview failed")
                 await context.bot.send_message(update.effective_chat.id, f"Preview failed: {exc}")
             finally:
                 if auto_promoted:
@@ -579,6 +591,8 @@ async def previewamazon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             "WARNING: Preview ke baad USER_SESSION ko automatically demote nahi kar paya. "
                             "Channel admin list manually check karein."
                         )
+                scan_state["running"] = False
+                scan_state["mode"] = None
     asyncio.create_task(scan())
 
 
