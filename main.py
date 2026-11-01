@@ -43,6 +43,12 @@ scan_state = {"running": False, "mode": None, "scanned": 0, "matched": 0, "delet
 selected_channel: Optional[int] = None
 
 
+def status_value(member) -> str:
+    """Normalize Pyrogram/PTB enum statuses to plain lowercase strings."""
+    status = getattr(member, "status", "")
+    return str(getattr(status, "value", status)).lower().split(".")[-1]
+
+
 def db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""CREATE TABLE IF NOT EXISTS channels (
@@ -109,7 +115,7 @@ def set_selected_channel(channel_id: int):
 
 async def add_channel(channel_id: int, title: str, added_by: int, bot):
     member = await bot.get_chat_member(channel_id, bot_id)
-    if member.status not in ("administrator", "creator"):
+    if status_value(member) not in ("administrator", "creator", "owner"):
         raise ValueError("Bot ko is channel ka admin banana zaroori hai.")
     conn = db()
     conn.execute("INSERT OR REPLACE INTO channels(chat_id,title,added_by) VALUES(?,?,?)",
@@ -222,9 +228,12 @@ async def ensure_history_account_admin(channel_id: int, bot) -> bool:
     account = await user.get_me()
     member = await user.get_chat_member(channel_id, account.id)
 
-    if member.status in ("administrator", "owner", "creator"):
+    member_status = status_value(member)
+    log.info("USER_SESSION channel membership: account_id=%s channel_id=%s status=%s delete_permission=%s", account.id, channel_id, member_status, getattr(getattr(member, "privileges", None), "can_delete_messages", None))
+
+    if member_status in ("administrator", "owner", "creator"):
         privileges = getattr(member, "privileges", None)
-        if member.status in ("owner", "creator") or (privileges and privileges.can_delete_messages):
+        if member_status in ("owner", "creator") or (privileges and privileges.can_delete_messages):
             return False
         raise PermissionError(
             "USER_SESSION pehle se admin hai, lekin Delete Messages permission nahi hai. "
@@ -235,9 +244,9 @@ async def ensure_history_account_admin(channel_id: int, bot) -> bool:
     # python-telegram-bot exposes administrator rights directly on the
     # ChatMemberAdministrator object (not under a .privileges attribute).
     bot_can_promote = (
-        bot_member.status in ("creator", "owner")
+        status_value(bot_member) in ("creator", "owner")
         or (
-            bot_member.status == "administrator"
+            status_value(bot_member) == "administrator"
             and bool(getattr(bot_member, "can_promote_members", False))
         )
     )
@@ -255,8 +264,9 @@ async def ensure_history_account_admin(channel_id: int, bot) -> bool:
     await asyncio.sleep(1)
     promoted = await user.get_chat_member(channel_id, account.id)
     privileges = getattr(promoted, "privileges", None)
-    if promoted.status not in ("administrator", "owner", "creator") or (
-        promoted.status == "administrator" and
+    promoted_status = status_value(promoted)
+    if promoted_status not in ("administrator", "owner", "creator") or (
+        promoted_status == "administrator" and
         (not privileges or not privileges.can_delete_messages)
     ):
         raise PermissionError(
