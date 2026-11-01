@@ -178,6 +178,15 @@ async def from_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def all_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Scan the channel's available history from the oldest accessible message."""
+    if not is_owner(update):
+        await reply(update, "You are not authorized to use this bot.")
+        return
+
+    asyncio.create_task(scan_from(1, update.effective_chat.id, context))
+
+
 async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
         await reply(update, "You are not authorized to use this bot.")
@@ -233,6 +242,7 @@ async def main():
 
     application.add_handler(CommandHandler("start", start_cmd))
     application.add_handler(CommandHandler("from", from_cmd))
+    application.add_handler(CommandHandler("all", all_cmd))
     application.add_handler(CommandHandler("stop", stop_cmd))
     application.add_handler(CommandHandler("status", status_cmd))
     application.add_handler(CommandHandler("stats", stats_cmd))
