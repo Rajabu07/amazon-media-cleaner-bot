@@ -15,8 +15,8 @@ from telegram.ext import (
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx").disabled = True
+logging.getLogger("httpcore").disabled = True
 log = logging.getLogger("amazon_media_cleaner")
 
 API_ID = int(os.environ["API_ID"])
@@ -166,7 +166,8 @@ async def verify_history_account_admin(channel_id: int):
     member = await user.get_chat_member(channel_id, (await user.get_me()).id)
     if member.status not in ("administrator", "owner", "creator"):
         raise PermissionError("USER_SESSION wala Telegram account bhi channel ka admin hona chahiye.")
-    if member.status == "administrator" and not getattr(member, "privileges", None).can_delete_messages:
+    privileges = getattr(member, "privileges", None)
+    if member.status == "administrator" and (not privileges or not privileges.can_delete_messages):
         raise PermissionError("USER_SESSION account ko Delete Messages permission nahi hai.")
 
 
