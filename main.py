@@ -162,10 +162,24 @@ async def delete_batch(channel_id: int, message_ids: list[int]) -> int:
         return 0
 
 
+async def warm_history_channel_peer(channel_id: int):
+    """Load the channel peer into Pyrogram's session database before using its numeric ID."""
+    async for dialog in user.get_dialogs():
+        if int(dialog.chat.id) == int(channel_id):
+            log.info("Resolved channel %s from USER_SESSION dialogs", channel_id)
+            return dialog.chat
+    raise ValueError(
+        "USER_SESSION account ko is channel ka peer nahi mil raha. "
+        "USER_SESSION wale Telegram account se channel ko join karein, "
+        "phir Telegram app mein channel open karke /Delamazon dobara chalayein."
+    )
+
+
 async def ensure_history_account_admin(channel_id: int, bot) -> bool:
     """Temporarily grant the connected USER_SESSION delete permission when needed.
     Returns True only when this function promoted the account, so it can be demoted later.
     """
+    await warm_history_channel_peer(channel_id)
     account = await user.get_me()
     member = await user.get_chat_member(channel_id, account.id)
 
