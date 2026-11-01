@@ -134,7 +134,11 @@ async def main():
     me = await user.get_me()
     log.info("History/deletion account started: %s (%s)", me.first_name, me.id)
     await bot.start()
-    log.info("Bot started.")
+    bot_me = await bot.get_me()
+    log.info("Bot started: @%s (id=%s)", bot_me.username, bot_me.id)
+    if (bot_me.username or "").lower() != "testingperpashbot":
+        log.error("BOT_TOKEN username mismatch: expected @Testingperpashbot, got @%s", bot_me.username)
+    log.info("Polling for bot updates; send /start to @%s now.", bot_me.username)
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
