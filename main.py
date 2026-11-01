@@ -175,11 +175,45 @@ async def warm_history_channel_peer(channel_id: int):
     )
 
 
+async def ensure_user_session_joined(channel_id: int, bot):
+    """Join USER_SESSION to a channel when possible, then resolve its Pyrogram peer.
+
+    Public channels can be joined from their username. Private channels require
+    CHANNEL_INVITE_LINK to be configured in Railway Variables.
+    """
+    chat = await bot.get_chat(channel_id)
+    username = getattr(chat, "username", None)
+    invite_link = os.environ.get("CHANNEL_INVITE_LINK", "").strip()
+
+    if username:
+        try:
+            await user.join_chat(username)
+            log.info("USER_SESSION joined public channel @%s", username)
+        except Exception as exc:
+            if "USER_ALREADY_PARTICIPANT" not in str(exc).upper() and "ALREADY PARTICIPANT" not in str(exc).upper():
+                raise
+    elif invite_link:
+        try:
+            await user.join_chat(invite_link)
+            log.info("USER_SESSION joined private channel %s using configured invite link", channel_id)
+        except Exception as exc:
+            if "USER_ALREADY_PARTICIPANT" not in str(exc).upper() and "ALREADY PARTICIPANT" not in str(exc).upper():
+                raise
+    else:
+        raise ValueError(
+            "Ye private channel hai. Railway Variables mein CHANNEL_INVITE_LINK naam ka "
+            "variable add karke is channel ka valid invite link daalein. Private channel "
+            "ko bina invite link ke USER_SESSION join nahi kar sakta."
+        )
+
+    await warm_history_channel_peer(channel_id)
+
+
 async def ensure_history_account_admin(channel_id: int, bot) -> bool:
-    """Temporarily grant the connected USER_SESSION delete permission when needed.
+    """Join USER_SESSION when possible, then temporarily grant delete permission.
     Returns True only when this function promoted the account, so it can be demoted later.
     """
-    await warm_history_channel_peer(channel_id)
+    await ensure_user_session_joined(channel_id, bot)
     account = await user.get_me()
     member = await user.get_chat_member(channel_id, account.id)
 
