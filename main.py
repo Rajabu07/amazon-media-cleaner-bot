@@ -92,7 +92,9 @@ async def scan_from(start_id: int, status_chat_id: int):
 
 @bot.on_message(filters.private & filters.command("start"))
 async def start_cmd(_, message: Message):
+    log.info("Received /start from user_id=%s", message.from_user.id if message.from_user else None)
     if not is_owner(message):
+        await message.reply_text("Bot is online, but this account is not authorized. Ask the bot owner to add your numeric Telegram ID to OWNER_IDS in Railway Variables, then redeploy.")
         return
     await message.reply_text("Amazon Media Cleaner is ready.\n\n/from MESSAGE_ID - scan from that message to latest\n/stop - stop current scan\n/status - show progress\n/stats - show last scan counts")
 
