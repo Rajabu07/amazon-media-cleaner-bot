@@ -232,11 +232,14 @@ async def ensure_history_account_admin(channel_id: int, bot) -> bool:
         )
 
     bot_member = await bot.get_chat_member(channel_id, bot_id)
-    bot_privileges = getattr(bot_member, "privileges", None)
+    # python-telegram-bot exposes administrator rights directly on the
+    # ChatMemberAdministrator object (not under a .privileges attribute).
     bot_can_promote = (
         bot_member.status in ("creator", "owner")
-        or (bot_member.status == "administrator" and bot_privileges
-            and bot_privileges.can_promote_members)
+        or (
+            bot_member.status == "administrator"
+            and bool(getattr(bot_member, "can_promote_members", False))
+        )
     )
     if not bot_can_promote:
         raise PermissionError(
