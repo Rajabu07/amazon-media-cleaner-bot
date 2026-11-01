@@ -176,11 +176,15 @@ async def warm_history_channel_peer(channel_id: int):
 
 
 async def ensure_user_session_joined(channel_id: int, bot):
-    """Join USER_SESSION to a channel when possible, then resolve its Pyrogram peer.
+    """Use an existing USER_SESSION membership before attempting an invite-based join."""
+    # First check whether the account has already joined manually. This avoids
+    # requiring an invite link on every run for private channels.
+    try:
+        await warm_history_channel_peer(channel_id)
+        return
+    except ValueError:
+        pass
 
-    Public channels can be joined from their username. Private channels require
-    CHANNEL_INVITE_LINK to be configured in Railway Variables.
-    """
     chat = await bot.get_chat(channel_id)
     username = getattr(chat, "username", None)
     invite_link = os.environ.get("CHANNEL_INVITE_LINK", "").strip()
@@ -201,9 +205,10 @@ async def ensure_user_session_joined(channel_id: int, bot):
                 raise
     else:
         raise ValueError(
-            "Ye private channel hai. Railway Variables mein CHANNEL_INVITE_LINK naam ka "
-            "variable add karke is channel ka valid invite link daalein. Private channel "
-            "ko bina invite link ke USER_SESSION join nahi kar sakta."
+            "USER_SESSION ko private channel ka peer nahi mil raha. Pehle isi USER_SESSION "
+            "wale Telegram account se channel join karein aur Telegram app mein channel "
+            "open karein. Phir /Delamazon dobara chalayein. Agar account abhi join nahi hai, "
+            "to Railway Variables mein CHANNEL_INVITE_LINK ek baar add karein."
         )
 
     await warm_history_channel_peer(channel_id)
