@@ -18,7 +18,7 @@ log = logging.getLogger("amazon_media_cleaner")
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-USER_SESSION = os.environ["USER_SESSION"]
+USER_SESSION = os.environ.get("USER_SESSION", "").strip()
 OWNER_IDS = {
     int(value.strip())
     for value in os.environ.get("OWNER_IDS", "").split(",")
@@ -38,6 +38,7 @@ user = Client(
     session_string=USER_SESSION,
 )
 
+user_ready = False
 scan_lock = asyncio.Lock()
 stop_event = asyncio.Event()
 scan_state = {"running": False, "scanned": 0, "deleted": 0, "last_id": None}
@@ -89,6 +90,14 @@ async def safe_delete(message: PyroMessage) -> bool:
 
 
 async def scan_from(start_id: int, chat_id: int, context: ContextTypes.DEFAULT_TYPE):
+    if not user_ready:
+        await context.bot.send_message(
+            chat_id,
+            "The bot is online, but the Telegram user session is not loaded. "
+            "Please replace USER_SESSION in Railway Variables with the complete Pyrogram session string.",
+        )
+        return
+
     if scan_lock.locked():
         await context.bot.send_message(chat_id, "A scan is already running. Use /status or /stop.")
         return
@@ -155,10 +164,12 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reply(update, "You are not authorized to use this bot.")
         return
 
+    session_status = "History account: connected." if user_ready else "History account: NOT connected; scanning is paused until USER_SESSION is corrected."
     await reply(
         update,
-        "Amazon Media Cleaner is online and ready.\\n\\n"
+        "Amazon Media Cleaner bot is online.\\n" + session_status + "\\n\\n"
         "/from MESSAGE_ID - scan from that message to latest\\n"
+        "/all - scan available history\\n"
         "/stop - stop current scan\\n"
         "/status - show progress\\n"
         "/stats - show last scan counts",
@@ -247,10 +258,19 @@ async def main():
     application.add_handler(CommandHandler("status", status_cmd))
     application.add_handler(CommandHandler("stats", stats_cmd))
 
+    global user_ready
     log.info("Starting Telegram Bot API polling service")
-    await user.start()
-    account = await user.get_me()
-    log.info("History/deletion account connected: id=%s", account.id)
+    try:
+        if not USER_SESSION:
+            raise RuntimeError("USER_SESSION is empty in Railway Variables")
+        log.info("USER_SESSION is present (length=%s); validating Pyrogram connection", len(USER_SESSION))
+        await user.start()
+        account = await user.get_me()
+        user_ready = True
+        log.info("History/deletion account connected: id=%s", account.id)
+    except Exception:
+        user_ready = False
+        log.exception("User session failed to load. Bot polling will still start; scan commands will be paused.")
 
     await application.initialize()
     await application.bot.delete_webhook(drop_pending_updates=False)
