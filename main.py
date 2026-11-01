@@ -27,7 +27,7 @@ OWNER_IDS = {
 CHANNEL_ID = int(os.environ["CHANNEL_ID"])
 
 AMAZON_RE = re.compile(
-    r"(?i)(?:https?://)?(?:www\\.)?(?:amazon\\.[a-z.]{2,}|amzn\\.to|a\\.co)(?:[/?:#][^\\s<>()\\]]*)?"
+    r"(?i)(?:https?://)?(?:www\.)?(?:amazon\.[a-z.]{2,}|amzn\.to|a\.co)(?:[/?:#][^\s<>()\]]*)?"
 )
 
 # The user account reads channel history and deletes matching media posts.
@@ -229,13 +229,7 @@ async def post_shutdown(application: Application):
 
 
 async def main():
-    application = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .post_init(post_init)
-        .post_shutdown(post_shutdown)
-        .build()
-    )
+    application = Application.builder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start_cmd))
     application.add_handler(CommandHandler("from", from_cmd))
@@ -244,7 +238,12 @@ async def main():
     application.add_handler(CommandHandler("stats", stats_cmd))
 
     log.info("Starting Telegram Bot API polling service")
+    await user.start()
+    account = await user.get_me()
+    log.info("History/deletion account connected: id=%s", account.id)
+
     await application.initialize()
+    await application.bot.delete_webhook(drop_pending_updates=False)
     await application.start()
 
     if application.updater is None:
@@ -264,6 +263,8 @@ async def main():
             await application.updater.stop()
         await application.stop()
         await application.shutdown()
+        if user.is_connected:
+            await user.stop()
 
 
 if __name__ == "__main__":
