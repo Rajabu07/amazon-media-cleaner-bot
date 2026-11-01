@@ -28,7 +28,7 @@ OWNER_IDS = {
 CHANNEL_ID = int(os.environ["CHANNEL_ID"])
 
 AMAZON_RE = re.compile(
-    r"(?i)(?:https?://)?(?:www\\.)?(?:amazon\\.[a-z.]{2,}|amzn\\.to|a\\.co)(?:[/?:#][^\\s<>()\\]]*)?"
+    r"(?i)(?:https?://)?(?:www\.)?(?:amazon\.[a-z.]{2,}|amzn\.to|a\.co)(?:[/?:#][^\s<>()\]]*)?"
 )
 
 user = Client(
@@ -142,8 +142,8 @@ async def run_delete(mode: str, chat_id: int, context: ContextTypes.DEFAULT_TYPE
             result = "Deletion stopped." if stop_event.is_set() else "Deletion completed."
             await context.bot.send_message(
                 chat_id,
-                f"{result}\\nMode: {mode}\\nScanned: {scan_state['scanned']}\\n"
-                f"Deleted: {scan_state['deleted']}\\nLast checked ID: {scan_state['last_id']}",
+                f"{result}\nMode: {mode}\nScanned: {scan_state['scanned']}\n"
+                f"Deleted: {scan_state['deleted']}\nLast checked ID: {scan_state['last_id']}",
             )
         except Exception as exc:
             log.exception("Deletion job failed")
@@ -169,13 +169,13 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session_status = "Connected" if user_ready else "NOT connected — check USER_SESSION"
     await reply(
         update,
-        "Amazon Media Cleaner is online.\\n"
-        f"History account: {session_status}\\n\\n"
-        "/Delall - delete all messages in configured channel\\n"
-        "/Delamazon - delete only photo posts containing Amazon links\\n"
-        "/Delfrom MESSAGE_ID - delete from that ID to latest\\n"
-        "Or reply to a forwarded channel post with /Delfrom\\n"
-        "/status - show progress\\n"
+        "Amazon Media Cleaner is online.\n"
+        f"History account: {session_status}\n\n"
+        "/Delall - delete all messages in configured channel\n"
+        "/Delamazon - delete only photo posts containing Amazon links\n"
+        "/Delfrom MESSAGE_ID - delete from that ID to latest\n"
+        "Or reply to a forwarded channel post with /Delfrom\n"
+        "/status - show progress\n"
         "/stop - stop the current job",
     )
 
@@ -231,8 +231,8 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await reply(
         update,
-        f"Running: {scan_state['running']}\\nMode: {scan_state['mode']}\\n"
-        f"Scanned: {scan_state['scanned']}\\nDeleted: {scan_state['deleted']}\\n"
+        f"Running: {scan_state['running']}\nMode: {scan_state['mode']}\n"
+        f"Scanned: {scan_state['scanned']}\nDeleted: {scan_state['deleted']}\n"
         f"Last checked ID: {scan_state['last_id']}",
     )
 
