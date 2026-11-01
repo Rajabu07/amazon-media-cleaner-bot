@@ -3,50 +3,80 @@ import logging
 import os
 import re
 
-from pyrogram import Client, filters
+from pyrogram import Client
 from pyrogram.errors import FloodWait, RPCError
-from pyrogram.types import Message
+from pyrogram.types import Message as PyroMessage
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 log = logging.getLogger("amazon_media_cleaner")
 
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 USER_SESSION = os.environ["USER_SESSION"]
-OWNER_IDS = {int(x.strip()) for x in os.environ.get("OWNER_IDS", "").split(",") if x.strip()}
+OWNER_IDS = {
+    int(value.strip())
+    for value in os.environ.get("OWNER_IDS", "").split(",")
+    if value.strip().isdigit()
+}
 CHANNEL_ID = int(os.environ["CHANNEL_ID"])
-AMAZON_RE = re.compile(r"(?i)(?:https?://)?(?:www\.)?(?:amazon\.[a-z.]{2,}|amzn\.to|a\.co)(?:[/?:#][^\s<>()\]]*)?")
 
-bot = Client("amazon_cleaner_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-user = Client("amazon_cleaner_user", api_id=API_ID, api_hash=API_HASH, session_string=USER_SESSION)
+AMAZON_RE = re.compile(
+    r"(?i)(?:https?://)?(?:www\\.)?(?:amazon\\.[a-z.]{2,}|amzn\\.to|a\\.co)(?:[/?:#][^\\s<>()\\]]*)?"
+)
+
+# The user account reads channel history and deletes matching media posts.
+user = Client(
+    "amazon_cleaner_user",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    session_string=USER_SESSION,
+)
+
 scan_lock = asyncio.Lock()
 stop_event = asyncio.Event()
 scan_state = {"running": False, "scanned": 0, "deleted": 0, "last_id": None}
 
-def is_owner(message: Message) -> bool:
-    return bool(message.from_user and message.from_user.id in OWNER_IDS)
 
-def contains_amazon_link(message: Message) -> bool:
+def is_owner(update: Update) -> bool:
+    return bool(update.effective_user and update.effective_user.id in OWNER_IDS)
+
+
+async def reply(update: Update, text: str):
+    if update.effective_message:
+        await update.effective_message.reply_text(text)
+
+
+def contains_amazon_link(message: PyroMessage) -> bool:
     body = message.text or message.caption or ""
     if AMAZON_RE.search(body):
         return True
-    for entity in list(message.entities or []) + list(message.caption_entities or []):
+
+    entities = list(message.entities or []) + list(message.caption_entities or [])
+    for entity in entities:
         hidden_url = getattr(entity, "url", None)
         if hidden_url and AMAZON_RE.search(hidden_url):
             return True
     return False
 
-def has_photo_or_video(message: Message) -> bool:
+
+def has_photo_or_video(message: PyroMessage) -> bool:
     return message.photo is not None or message.video is not None
 
-async def safe_delete(message: Message) -> bool:
+
+async def safe_delete(message: PyroMessage) -> bool:
     try:
         await user.delete_messages(CHANNEL_ID, message.id)
         return True
     except FloodWait as exc:
-        log.warning("FloodWait: waiting %s seconds", exc.value)
-        await asyncio.sleep(exc.value)
+        wait_seconds = int(getattr(exc, "value", 5))
+        log.warning("Telegram FloodWait; waiting %s seconds", wait_seconds)
+        await asyncio.sleep(wait_seconds)
         try:
             await user.delete_messages(CHANNEL_ID, message.id)
             return True
@@ -57,89 +87,184 @@ async def safe_delete(message: Message) -> bool:
         log.exception("Delete failed for message %s", message.id)
         return False
 
-async def scan_from(start_id: int, status_chat_id: int):
+
+async def scan_from(start_id: int, chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     if scan_lock.locked():
-        await bot.send_message(status_chat_id, "A scan is already running. Use /status or /stop.")
+        await context.bot.send_message(chat_id, "A scan is already running. Use /status or /stop.")
         return
+
     async with scan_lock:
         stop_event.clear()
         scan_state.update(running=True, scanned=0, deleted=0, last_id=start_id)
-        await bot.send_message(status_chat_id, f"Scan started from message ID {start_id} to latest. Only photo/video posts containing Amazon links will be deleted.")
+        await context.bot.send_message(
+            chat_id,
+            f"Scan started from message ID {start_id} to latest. "
+            "Only photo/video posts containing Amazon links will be deleted.",
+        )
         try:
             selected = []
-            async for msg in user.get_chat_history(CHANNEL_ID):
-                if msg.id >= start_id:
-                    selected.append(msg)
+            async for message in user.get_chat_history(CHANNEL_ID):
+                if message.id >= start_id:
+                    selected.append(message)
                 else:
                     break
+
             selected.reverse()
-            for msg in selected:
+            for message in selected:
                 if stop_event.is_set():
                     break
+
                 scan_state["scanned"] += 1
-                scan_state["last_id"] = msg.id
-                if has_photo_or_video(msg) and contains_amazon_link(msg):
-                    if await safe_delete(msg):
+                scan_state["last_id"] = message.id
+
+                if has_photo_or_video(message) and contains_amazon_link(message):
+                    if await safe_delete(message):
                         scan_state["deleted"] += 1
+
                 await asyncio.sleep(0.15)
+
             result = "Scan stopped." if stop_event.is_set() else "Scan completed."
-            await bot.send_message(status_chat_id, f"{result}\nScanned: {scan_state['scanned']}\nDeleted: {scan_state['deleted']}\nLast checked message ID: {scan_state['last_id']}")
+            await context.bot.send_message(
+                chat_id,
+                f"{result}\\nScanned: {scan_state['scanned']}\\n"
+                f"Deleted: {scan_state['deleted']}\\n"
+                f"Last checked message ID: {scan_state['last_id']}",
+            )
         except Exception as exc:
             log.exception("Scan failed")
-            await bot.send_message(status_chat_id, f"Scan failed: {type(exc).__name__}: {exc}")
+            await context.bot.send_message(
+                chat_id, f"Scan failed: {type(exc).__name__}: {exc}"
+            )
         finally:
             scan_state["running"] = False
 
-@bot.on_message(filters.private & filters.command("start"))
-async def start_cmd(_, message: Message):
-    log.info("Received /start from user_id=%s", message.from_user.id if message.from_user else None)
-    if not is_owner(message):
-        await message.reply_text("Bot is online, but this account is not authorized. Ask the bot owner to add your numeric Telegram ID to OWNER_IDS in Railway Variables, then redeploy.")
-        return
-    await message.reply_text("Amazon Media Cleaner is ready.\n\n/from MESSAGE_ID - scan from that message to latest\n/stop - stop current scan\n/status - show progress\n/stats - show last scan counts")
 
-@bot.on_message(filters.private & filters.command("from"))
-async def from_cmd(_, message: Message):
-    if not is_owner(message):
-        return
-    if len(message.command) != 2 or not message.command[1].isdigit() or int(message.command[1]) < 1:
-        await message.reply_text("Usage: /from 500")
-        return
-    asyncio.create_task(scan_from(int(message.command[1]), message.chat.id))
+async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id if update.effective_user else None
+    log.info("Received /start from Telegram user_id=%s", uid)
 
-@bot.on_message(filters.private & filters.command("stop"))
-async def stop_cmd(_, message: Message):
-    if not is_owner(message):
+    if not OWNER_IDS:
+        await reply(
+            update,
+            "Bot is online, but OWNER_IDS is empty in Railway Variables. "
+            "Add your numeric Telegram user ID to OWNER_IDS.",
+        )
+        return
+
+    if not is_owner(update):
+        await reply(update, "You are not authorized to use this bot.")
+        return
+
+    await reply(
+        update,
+        "Amazon Media Cleaner is online and ready.\\n\\n"
+        "/from MESSAGE_ID - scan from that message to latest\\n"
+        "/stop - stop current scan\\n"
+        "/status - show progress\\n"
+        "/stats - show last scan counts",
+    )
+
+
+async def from_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        await reply(update, "You are not authorized to use this bot.")
+        return
+    if len(context.args) != 1 or not context.args[0].isdigit() or int(context.args[0]) < 1:
+        await reply(update, "Usage: /from 500")
+        return
+
+    asyncio.create_task(
+        scan_from(int(context.args[0]), update.effective_chat.id, context)
+    )
+
+
+async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        await reply(update, "You are not authorized to use this bot.")
         return
     if scan_state["running"]:
         stop_event.set()
-        await message.reply_text("Stop requested. The scan will stop shortly.")
+        await reply(update, "Stop requested. The scan will stop shortly.")
     else:
-        await message.reply_text("No scan is currently running.")
+        await reply(update, "No scan is currently running.")
 
-@bot.on_message(filters.private & filters.command("status"))
-async def status_cmd(_, message: Message):
-    if not is_owner(message):
-        return
-    await message.reply_text(f"Running: {scan_state['running']}\nScanned: {scan_state['scanned']}\nDeleted: {scan_state['deleted']}\nLast checked ID: {scan_state['last_id']}")
 
-@bot.on_message(filters.private & filters.command("stats"))
-async def stats_cmd(_, message: Message):
-    if not is_owner(message):
+async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        await reply(update, "You are not authorized to use this bot.")
         return
-    await message.reply_text(f"Last scan stats\nScanned: {scan_state['scanned']}\nDeleted: {scan_state['deleted']}")
+    await reply(
+        update,
+        f"Running: {scan_state['running']}\\n"
+        f"Scanned: {scan_state['scanned']}\\n"
+        f"Deleted: {scan_state['deleted']}\\n"
+        f"Last checked ID: {scan_state['last_id']}",
+    )
+
+
+async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        await reply(update, "You are not authorized to use this bot.")
+        return
+    await reply(
+        update,
+        f"Last scan stats\\nScanned: {scan_state['scanned']}\\n"
+        f"Deleted: {scan_state['deleted']}",
+    )
+
+
+async def post_init(application: Application):
+    await user.start()
+    account = await user.get_me()
+    log.info("History/deletion account connected: id=%s", account.id)
+
+    # Clear any stale webhook so long polling can receive bot messages.
+    await application.bot.delete_webhook(drop_pending_updates=False)
+    log.info("Telegram webhook cleared; starting long polling")
+
+
+async def post_shutdown(application: Application):
+    if user.is_connected:
+        await user.stop()
+
 
 async def main():
-    await user.start()
-    me = await user.get_me()
-    log.info("History/deletion account started: %s (%s)", me.first_name, me.id)
-    await bot.start()
-    bot_me = await bot.get_me()
-    log.info("Bot started: @%s (id=%s)", bot_me.username, bot_me.id)
-    if (bot_me.username or "").lower() != "testingperpashbot":
-        log.error("BOT_TOKEN username mismatch: expected @Testingperpashbot, got @%s", bot_me.username)
-    log.info("Polling for bot updates; send /start to @%s now.", bot_me.username)
-    await asyncio.Event().wait()
+    application = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
+
+    application.add_handler(CommandHandler("start", start_cmd))
+    application.add_handler(CommandHandler("from", from_cmd))
+    application.add_handler(CommandHandler("stop", stop_cmd))
+    application.add_handler(CommandHandler("status", status_cmd))
+    application.add_handler(CommandHandler("stats", stats_cmd))
+
+    log.info("Starting Telegram Bot API polling service")
+    await application.initialize()
+    await application.start()
+
+    if application.updater is None:
+        raise RuntimeError("Telegram polling updater is unavailable")
+
+    await application.updater.start_polling(
+        drop_pending_updates=False,
+        allowed_updates=Update.ALL_TYPES,
+    )
+    me = await application.bot.get_me()
+    log.info("Polling active for @%s (id=%s)", me.username, me.id)
+
+    try:
+        await asyncio.Event().wait()
+    finally:
+        if application.updater.running:
+            await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
