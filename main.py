@@ -162,13 +162,72 @@ async def delete_batch(channel_id: int, message_ids: list[int]) -> int:
         return 0
 
 
-async def verify_history_account_admin(channel_id: int):
-    member = await user.get_chat_member(channel_id, (await user.get_me()).id)
-    if member.status not in ("administrator", "owner", "creator"):
-        raise PermissionError("USER_SESSION wala Telegram account bhi channel ka admin hona chahiye.")
-    privileges = getattr(member, "privileges", None)
-    if member.status == "administrator" and (not privileges or not privileges.can_delete_messages):
-        raise PermissionError("USER_SESSION account ko Delete Messages permission nahi hai.")
+async def ensure_history_account_admin(channel_id: int, bot) -> bool:
+    """Temporarily grant the connected USER_SESSION delete permission when needed.
+    Returns True only when this function promoted the account, so it can be demoted later.
+    """
+    account = await user.get_me()
+    member = await user.get_chat_member(channel_id, account.id)
+
+    if member.status in ("administrator", "owner", "creator"):
+        privileges = getattr(member, "privileges", None)
+        if member.status in ("owner", "creator") or (privileges and privileges.can_delete_messages):
+            return False
+        raise PermissionError(
+            "USER_SESSION pehle se admin hai, lekin Delete Messages permission nahi hai. "
+            "Is existing admin ke permissions ko automatic change nahi kiya gaya."
+        )
+
+    bot_member = await bot.get_chat_member(channel_id, bot_id)
+    bot_privileges = getattr(bot_member, "privileges", None)
+    bot_can_promote = (
+        bot_member.status in ("creator", "owner")
+        or (bot_member.status == "administrator" and bot_privileges
+            and bot_privileges.can_promote_members)
+    )
+    if not bot_can_promote:
+        raise PermissionError(
+            "Bot USER_SESSION ko admin nahi bana sakta. Channel mein bot ko "
+            "'Add New Admins' / Promote Members permission dein."
+        )
+
+    await bot.promote_chat_member(
+        chat_id=channel_id,
+        user_id=account.id,
+        can_delete_messages=True,
+    )
+    await asyncio.sleep(1)
+    promoted = await user.get_chat_member(channel_id, account.id)
+    privileges = getattr(promoted, "privileges", None)
+    if promoted.status not in ("administrator", "owner", "creator") or (
+        promoted.status == "administrator" and
+        (not privileges or not privileges.can_delete_messages)
+    ):
+        raise PermissionError(
+            "Telegram ne USER_SESSION ko Delete Messages permission ke saath admin nahi banaya."
+        )
+    log.info("Temporarily promoted USER_SESSION %s in channel %s", account.id, channel_id)
+    return True
+
+
+async def demote_history_account(channel_id: int, bot):
+    account = await user.get_me()
+    await bot.promote_chat_member(
+        chat_id=channel_id,
+        user_id=account.id,
+        can_manage_chat=False,
+        can_change_info=False,
+        can_post_messages=False,
+        can_edit_messages=False,
+        can_delete_messages=False,
+        can_invite_users=False,
+        can_restrict_members=False,
+        can_pin_messages=False,
+        can_promote_members=False,
+        can_manage_video_chats=False,
+        can_manage_topics=False,
+    )
+    log.info("Demoted temporary USER_SESSION admin in channel %s", channel_id)
 
 
 async def run_delete(mode: str, owner_chat_id: int, context: ContextTypes.DEFAULT_TYPE,
@@ -191,8 +250,9 @@ async def run_delete(mode: str, owner_chat_id: int, context: ContextTypes.DEFAUL
                   "from": f"messages from ID {start_id} onward"}
         await context.bot.send_message(owner_chat_id, f"Started in {channel_id}: {labels[mode]}.")
         batch = []
+        auto_promoted = False
         try:
-            await verify_history_account_admin(channel_id)
+            auto_promoted = await ensure_history_account_admin(channel_id, context.bot)
             async for message in user.get_chat_history(channel_id):
                 if stop_event.is_set():
                     break
@@ -226,6 +286,19 @@ async def run_delete(mode: str, owner_chat_id: int, context: ContextTypes.DEFAUL
             log.exception("Deletion job failed")
             await context.bot.send_message(owner_chat_id, f"Job failed: {type(exc).__name__}: {exc}")
         finally:
+            if auto_promoted:
+                try:
+                    await demote_history_account(channel_id, context.bot)
+                except Exception:
+                    log.exception("Could not demote temporary USER_SESSION admin in %s", channel_id)
+                    try:
+                        await context.bot.send_message(
+                            owner_chat_id,
+                            "WARNING: Job ke baad USER_SESSION ko automatically demote nahi kar paya. "
+                            "Channel admin list mein manually check karein."
+                        )
+                    except Exception:
+                        pass
             scan_state["running"] = False
             scan_state["mode"] = None
 
@@ -418,8 +491,9 @@ async def previewamazon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async def scan():
         async with scan_lock:
             count = scanned = 0
+            auto_promoted = False
             try:
-                await verify_history_account_admin(cid)
+                auto_promoted = await ensure_history_account_admin(cid, context.bot)
                 async for message in user.get_chat_history(cid):
                     scanned += 1
                     if has_photo(message) and contains_amazon_link(message):
@@ -428,6 +502,17 @@ async def previewamazon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"Preview complete.\nChannel: {cid}\nScanned: {scanned}\nAmazon photo matches: {count}\nKoi post delete nahi ki gayi.")
             except Exception as exc:
                 await context.bot.send_message(update.effective_chat.id, f"Preview failed: {exc}")
+            finally:
+                if auto_promoted:
+                    try:
+                        await demote_history_account(cid, context.bot)
+                    except Exception:
+                        log.exception("Could not demote temporary USER_SESSION admin after preview in %s", cid)
+                        await context.bot.send_message(
+                            update.effective_chat.id,
+                            "WARNING: Preview ke baad USER_SESSION ko automatically demote nahi kar paya. "
+                            "Channel admin list manually check karein."
+                        )
     asyncio.create_task(scan())
 
 
